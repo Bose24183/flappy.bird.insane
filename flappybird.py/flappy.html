@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Flappy Bird Insane</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: black; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<audio id="music" loop></audio>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const audio = document.getElementById('music');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+const LEVELS = {
+  1: { sfondo: 'sfondo.png', base: 'base.png', tubo: 'tubo.png', musica: 'musica1.mp3', velocita: 2 },
+  2: { sfondo: 'sfondo2.png', base: 'base2.png', tubo: 'tubo2.png', musica: 'musica2.mp3', velocita: 2.1 },
+  3: { sfondo: 'sfondo3.png', base: 'base3.png', tubo: 'tubo3.png', musica: 'musica3.mp3', velocita: 2.2 }
+};
+
+let livello = 1;
+let velocita = LEVELS[1].velocita;
+let punti = 0;
+let record = localStorage.getItem("record") || 0;
+
+let fra_i_tubi = false;
+let basex = 0;
+let uccellox, uccelloy, uccello_vely;
+let tubi = [];
+let mostraMessaggio = true;
+let primoAvvio = true;
+let giocoAttivo = false;
+let attesaLivello = false;
+let morto = false;
+
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+let immagini = {};
+let assetsLoaded = 0;
+
+const sources = {
+  uccello: 'immagini/uccello.png',
+  gameover: 'immagini/gameover.png',
+  ...Object.fromEntries(Object.values(LEVELS).flatMap((l, i) => [
+    [`sfondo${i+1}`, 'immagini/' + l.sfondo],
+    [`base${i+1}`, 'immagini/' + l.base],
+    [`tubo${i+1}`, 'immagini/' + l.tubo]
+  ]))
+};
+
+function setMusica(nome) {
+  audio.src = "immagini/" + nome;
+  audio.play();
+}
+
+class Tubo {
+  constructor() {
+    this.x = canvas.width;
+    this.y = Math.floor(Math.random() * 150) - 75;
+  }
+
+  avanza_e_disegna() {
+    if (giocoAttivo) this.x -= velocita;
+    const tuboAltezza = 240;
+    const imgTubo = immagini['tubo' + livello];
+
+    ctx.drawImage(imgTubo, this.x, this.y + tuboAltezza);
+
+    ctx.save();
+    ctx.translate(this.x + imgTubo.width / 2, this.y - tuboAltezza + imgTubo.height / 2);
+    ctx.scale(1, -1);
+    ctx.drawImage(imgTubo, -imgTubo.width / 2, -imgTubo.height / 2);
+    ctx.restore();
+  }
+
+  collisione() {
+    const t = 5;
+    const dx = uccellox + immagini.uccello.width * 1.2 - t;
+    const sx = uccellox + t;
+    const dy = uccelloy + immagini.uccello.height * 1.2 - t;
+    const sy = uccelloy + t;
+    const tuboDx = this.x + immagini['tubo' + livello].width;
+    const tuboSx = this.x;
+    const tuboSu = this.y + 100;
+    const tuboGiu = this.y + 240;
+    if (dx > tuboSx && sx < tuboDx && (sy < tuboSu || dy > tuboGiu)) ricomincia();
+  }
+
+  fra_i_tubi() {
+    const t = 5;
+    const dx = uccellox + immagini.uccello.width * 1.2 - t;
+    const sx = uccellox + t;
+    const tuboDx = this.x + immagini['tubo' + livello].width;
+    const tuboSx = this.x;
+    return dx > tuboSx && sx < tuboDx;
+  }
+}
+
+function inizializza() {
+  uccellox = 60;
+  uccelloy = canvas.height / 2;
+  uccello_vely = 0;
+  basex = 0;
+  tubi = [new Tubo()];
+  fra_i_tubi = false;
+  morto = false;
+}
+
+function ricomincia() {
+  giocoAttivo = false;
+  mostraMessaggio = true;
+  morto = true;
+  audio.pause();
+  if (punti > record) {
+    record = punti;
+    localStorage.setItem("record", record);
+  }
+}
+
+function mostraIstruzioni() {
+  let msg = primoAvvio ? "Tap/Space to Start" :
+            morto ? "Game Over – Tap/Space to Restart" :
+            attesaLivello ? `Start LEVEL ${livello}` : "";
+  if (msg) {
+    ctx.fillStyle = "white";
+    ctx.font = "30px 'Comic Sans MS'";
+    ctx.textAlign = "center";
+    ctx.fillText(msg, canvas.width / 2, canvas.height / 2);
+  }
+  if (morto) ctx.drawImage(immagini.gameover, canvas.width / 2 - 150, canvas.height / 2 - 200, 300, 100);
+}
+
+function disegna_oggetti() {
+  ctx.drawImage(immagini["sfondo" + livello], 0, 0, canvas.width, canvas.height);
+  tubi.forEach(t => t.avanza_e_disegna());
+  ctx.drawImage(immagini.uccello, uccellox, uccelloy, immagini.uccello.width * 1.2, immagini.uccello.height * 1.2);
+  if (giocoAttivo) basex -= velocita;
+
+  if (basex <= -immagini["base" + livello].width) basex = 0;
+  for (let i = 0; i <= canvas.width / immagini["base" + livello].width + 1; i++) {
+    ctx.drawImage(immagini["base" + livello], basex + i * immagini["base" + livello].width, canvas.height - 100);
+  }
+
+  ctx.fillStyle = "white";
+  ctx.font = "35px 'Comic Sans MS'";
+  ctx.textAlign = "center";
+  ctx.fillText(`Punti: ${punti}`, canvas.width / 2, 60);
+  ctx.fillText(`Record: ${record}`, canvas.width / 2, 100);
+  if (mostraMessaggio) mostraIstruzioni();
+}
+
+function gameLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!giocoAttivo) {
+    disegna_oggetti();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  if (tubi[tubi.length - 1].x < canvas.width / 2) tubi.push(new Tubo());
+  tubi.forEach(t => t.collisione());
+
+  if (!fra_i_tubi && tubi.some(t => t.fra_i_tubi())) {
+    fra_i_tubi = true;
+  } else if (fra_i_tubi && !tubi.some(t => t.fra_i_tubi())) {
+    fra_i_tubi = false;
+    punti++;
+
+    // Passaggio di livello
+    if (livello === 1 && punti >= 20) {
+      giocoAttivo = false;
+      mostraMessaggio = true;
+      attesaLivello = true;
+      audio.pause();
+      livello = 2;
+      velocita = LEVELS[livello].velocita;
+      return;
+    }
+
+    if (livello === 2 && punti >= 40) {
+      giocoAttivo = false;
+      mostraMessaggio = true;
+      attesaLivello = true;
+      audio.pause();
+      livello = 3;
+      velocita = LEVELS[livello].velocita;
+      return;
+    }
+  }
+
+  uccello_vely += 0.15;
+  uccelloy += uccello_vely;
+
+  if (uccelloy + immagini.uccello.height * 1.2 > canvas.height - 100 || uccelloy < -50) {
+    ricomincia();
+  }
+
+  disegna_oggetti();
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  if (primoAvvio) {
+    inizializza();
+    giocoAttivo = true;
+    mostraMessaggio = false;
+    setMusica(LEVELS[livello].musica);
+    gameLoop();
+    primoAvvio = false;
+  } else if (attesaLivello) {
+    inizializza();
+    giocoAttivo = true;
+    mostraMessaggio = false;
+    attesaLivello = false;
+    setMusica(LEVELS[livello].musica);
+  } else if (!giocoAttivo && morto) {
+    livello = 1;
+    velocita = LEVELS[1].velocita;
+    punti = 0;
+    inizializza();
+    giocoAttivo = true;
+    mostraMessaggio = false;
+    setMusica(LEVELS[livello].musica);
+  }
+  uccello_vely = -JUMP_FORCE;
+}
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') startGame();
+});
+window.addEventListener('click', startGame);
+window.addEventListener('touchstart', startGame);
+
+function loadImages(sources, callback) {
+  let total = Object.keys(sources).length;
+  for (let key in sources) {
+    immagini[key] = new Image();
+    immagini[key].src = sources[key];
+    immagini[key].onload = () => {
+      assetsLoaded++;
+      if (assetsLoaded >= total) callback();
+    };
+    immagini[key].onerror = () => {
+      console.error("Errore nel caricamento:", immagini[key].src);
+    };
+  }
+}
+
+loadImages(sources, () => {
+  gameLoop(); // Avvia la schermata iniziale
+});
+</script>
+</body>
+</html>
